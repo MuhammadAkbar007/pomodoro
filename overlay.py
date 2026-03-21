@@ -26,6 +26,9 @@ class Overlay(Gtk.Window):
     def __init__(self):
         super().__init__()
 
+        self.set_can_focus(True)
+        self.grab_focus()
+
         # --- Layer shell init ---
         GtkLayerShell.init_for_window(self)
         GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
@@ -43,7 +46,7 @@ class Overlay(Gtk.Window):
         GtkLayerShell.set_exclusive_zone(self, -1)
 
         # Optional: appear on all outputs
-        GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.ON_DEMAND)
+        GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.EXCLUSIVE)
 
         # --- Transparency ---
         self.set_app_paintable(True)

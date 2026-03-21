@@ -6,7 +6,8 @@ import os
 import subprocess
 from pathlib import Path
 
-STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
+# STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
+STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
 WORK = 30
 # WORK = 25 * 60  # 25 minutes
