@@ -56,24 +56,53 @@ while True:
     minutes = remaining // 60
     seconds = remaining % 60
 
+    cycle_raw = data.get("cycle", 0)
+
+    # Normalize to 1–4
+    cycle = cycle_raw % 4
+    cycle = 4 if cycle == 0 and cycle_raw != 0 else cycle
+
+    # Build dots: ●  = done, ○  = remaining
+    dots = "" * cycle
+    # dots = "" * cycle + "" * (4 - cycle) # out of 4
+    # dots = "" * (cycle - 1) + "◉" + "" * (4 - cycle) # currently
+
     if state == "work":
-        icon = "󱎫"  # focus 󰔛
+        text = f"󱎫 {minutes:02}:{seconds:02} {dots}"  # 󰔛
     elif state == "break":
-        icon = ""  # rest
+        text = f" {minutes:02}:{seconds:02} {dots}"
+    elif state == "waiting":
+        text = f" --:-- {dots}"  # 󰞌 󰚭
     else:
-        icon = ""  # paused
+        text = f" --:-- {dots}"
 
     print(
         json.dumps(
             {
-                "text": f"{icon} {minutes:02}:{seconds:02} ({data.get('cycle', 0)}/4)",
+                "text": text,
                 "class": state,
             }
         ),
         flush=True,
     )
 
-    if remaining == 0 and state != "idle" and not data.get("handled", False):
+    # fallback: if break finished but no overlay handled it
+    if state == "break" and remaining == 0:
+        # if nobody transitioned us → go to work
+        data["state"] = "work"
+        data["duration"] = WORK
+        data["start_time"] = now
+        data["paused"] = False
+        data["paused_at"] = None
+        data["handled"] = False
+        save(data)
+        continue
+
+    if (
+        remaining == 0
+        and state not in ("idle", "waiting")
+        and not data.get("handled", False)
+    ):
         data["handled"] = True
 
         if state == "work":
@@ -85,12 +114,14 @@ while True:
         subprocess.run(["paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga"])
 
         if state == "work":
+            data["start_time"] = now
             data["cycle"] = data.get("cycle", 0) + 1
 
             # every 4th work session → long break
             if data["cycle"] % 4 == 0:
                 data["state"] = "break"
                 data["duration"] = LONG_BREAK
+                data["cycle"] = 0
             else:
                 data["state"] = "break"
                 data["duration"] = SHORT_BREAK
@@ -112,15 +143,11 @@ while True:
             )
 
         elif state == "break":
-            # after break → back to work
-            data["state"] = "work"
-            data["duration"] = WORK
+            data["state"] = "waiting"
+            data["start_time"] = None
+            data["paused"] = False
+            data["paused_at"] = None
 
-            # reset cycle after long break
-            if data.get("cycle", 0) % 4 == 0:
-                data["cycle"] = 0
-
-        data["start_time"] = now
         data["paused"] = False
         data["paused_at"] = None
         data["handled"] = False

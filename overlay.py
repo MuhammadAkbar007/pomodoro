@@ -9,11 +9,14 @@ gi.require_version("GtkLayerShell", "0.1")
 from gi.repository import Gtk, Gdk, GLib, GtkLayerShell  # noqa: E402
 
 import json  # noqa: E402
+import os  # noqa: E402
 import time  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 
-STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
+WORK = 30
+# STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
+STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
 
 def load():
@@ -94,13 +97,16 @@ class Overlay(Gtk.Window):
         if not data:
             return True
 
-        if data["state"] != "break":
+        if data["state"] not in ("break", "waiting"):
             Gtk.main_quit()
             return False
 
         now = time.time()
-        elapsed = now - data["start_time"]
-        remaining = max(0, int(data["duration"] - elapsed))
+        if data["state"] == "break":
+            elapsed = now - data["start_time"]
+            remaining = max(0, int(data["duration"] - elapsed))
+        else:
+            remaining = 0
 
         minutes = remaining // 60
         seconds = remaining % 60
@@ -111,12 +117,27 @@ class Overlay(Gtk.Window):
         else:
             break_type = "Short Break"
 
-        self.label.set_text(f"{break_type}\n{minutes:02}:{seconds:02}")
+        if data["state"] == "break":
+            label = f"{break_type}\n{minutes:02}:{seconds:02}"
+        else:
+            label = "Break finished\nPress any key to continue"
+        self.label.set_text(label)
 
         self.queue_draw()
         return True
 
     def close(self, *args):
+        data = load()
+        if data and data["state"] in ("waiting", "break"):
+            data["state"] = "work"
+            data["duration"] = WORK
+            data["start_time"] = time.time()
+            data["paused"] = False
+            data["paused_at"] = None
+            data["handled"] = False
+
+            STATE_FILE.write_text(json.dumps(data))
+
         Gtk.main_quit()
 
 

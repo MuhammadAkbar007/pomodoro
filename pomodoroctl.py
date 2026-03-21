@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
 import json
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
 
-STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
+# STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
+STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
 WORK = 30
 # WORK = 25 * 60
@@ -65,6 +68,14 @@ elif cmd == "toggle":
         data["paused_at"] = None
         data["handled"] = False
 
+    elif data["state"] == "waiting":
+        data["state"] = "work"
+        data["duration"] = WORK
+        data["start_time"] = now
+        data["paused"] = False
+        data["paused_at"] = None
+        data["handled"] = False
+
     elif data["paused"]:
         # RESUME
         data["paused"] = False
@@ -84,8 +95,31 @@ elif cmd == "toggle":
 # ---- NEXT
 elif cmd == "next":
     if data["state"] == "work":
-        data["state"] = "break"
-        data["duration"] = SHORT_BREAK
+        data["cycle"] = data.get("cycle", 0) + 1
+
+        # every 4th work session → long break
+        if data["cycle"] % 4 == 0:
+            data["state"] = "break"
+            data["duration"] = LONG_BREAK
+        else:
+            data["state"] = "break"
+            data["duration"] = SHORT_BREAK
+
+        # 👇 launch overlay
+        env = os.environ.copy()
+        env.setdefault("WAYLAND_DISPLAY", "wayland-0")
+        env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+
+        subprocess.Popen(
+            [
+                "flock",
+                "-n",
+                "/tmp/pomodoro_overlay.lock",
+                "python3",
+                "/home/akbar/akbarDev/pet-projects/pomodoro/overlay.py",
+            ],
+            env=env,
+        )
     else:
         data["state"] = "work"
         data["duration"] = WORK
