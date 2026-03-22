@@ -45,6 +45,18 @@ while True:
     state = data["state"]
     if state == "idle":
         remaining = data["duration"]
+    elif state == "waiting":
+        print(
+            json.dumps(
+                {
+                    "text": " --:--",  # or reuse your existing formatting
+                    "class": state,
+                }
+            ),
+            flush=True,
+        )
+        time.sleep(1)
+        continue
     elif data["paused"] and data["paused_at"] is not None:
         remaining = int(data["paused_at"])
     elif data["start_time"] is not None:
@@ -62,8 +74,9 @@ while True:
     cycle = cycle_raw % 4
     cycle = 4 if cycle == 0 and cycle_raw != 0 else cycle
 
-    # Build dots: ●  = done, ○  = remaining
-    dots = "" * cycle
+    # Build dots: ●  = done, ○  = remaining 󰨑
+    dots = "󰜋" * (cycle - 1) + "󰨑"
+    # dots = "" * cycle
     # dots = "" * cycle + "" * (4 - cycle) # out of 4
     # dots = "" * (cycle - 1) + "◉" + "" * (4 - cycle) # currently
 
@@ -72,9 +85,9 @@ while True:
     elif state == "break":
         text = f" {minutes:02}:{seconds:02} {dots}"
     elif state == "waiting":
-        text = f" --:-- {dots}"  # 󰞌 󰚭
+        text = f" -- : -- {dots}"  # 󰞌 󰚭
     else:
-        text = f" --:-- {dots}"
+        text = f" -- : -- {dots}"
 
     print(
         json.dumps(
@@ -85,18 +98,6 @@ while True:
         ),
         flush=True,
     )
-
-    # fallback: if break finished but no overlay handled it
-    if state == "break" and remaining == 0:
-        # if nobody transitioned us → go to work
-        data["state"] = "work"
-        data["duration"] = WORK
-        data["start_time"] = now
-        data["paused"] = False
-        data["paused_at"] = None
-        data["handled"] = False
-        save(data)
-        continue
 
     if (
         remaining == 0

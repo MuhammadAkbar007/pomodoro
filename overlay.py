@@ -112,7 +112,8 @@ class Overlay(Gtk.Window):
         seconds = remaining % 60
 
         # Break type logic
-        if data.get("cycle", 0) % 4 == 0:
+        cycle = data.get("cycle", 0)
+        if cycle != 0 and cycle % 4 == 0:
             break_type = "Long Break"
         else:
             break_type = "Short Break"
