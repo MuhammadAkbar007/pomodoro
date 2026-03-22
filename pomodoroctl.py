@@ -10,13 +10,13 @@ from pathlib import Path
 # STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
 STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
-WORK = 30
+WORK = 10
 # WORK = 25 * 60
 
-SHORT_BREAK = 30
+SHORT_BREAK = 10
 # SHORT_BREAK = 5 * 60
 
-LONG_BREAK = 30
+LONG_BREAK = 10
 # LONG_BREAK = 15 * 60
 
 
@@ -44,16 +44,20 @@ now = time.time()
 
 # ---- RESET
 if cmd == "reset":
-    if data["state"] == "break":
-        # determine correct break type
-        if data.get("cycle", 0) % 4 == 0 and data.get("cycle", 0) != 0:
-            data["duration"] = LONG_BREAK
-        else:
-            data["duration"] = SHORT_BREAK
-    else:
-        data["state"] = "work"
-        data["duration"] = WORK
+    # if data["state"] == "break":
+    #     # determine correct break type
+    #     if data.get("cycle", 0) % 4 == 0 and data.get("cycle", 0) != 0:
+    #         data["duration"] = LONG_BREAK
+    #     else:
+    #         data["duration"] = SHORT_BREAK
+    # else:
+    #     data["state"] = "work"
+    #     data["duration"] = WORK
+    #     data["cycle"] = 0
 
+    data["state"] = "work"
+    data["duration"] = WORK
+    data["cycle"] = 0
     data["start_time"] = now
     data["paused"] = False
     data["paused_at"] = None

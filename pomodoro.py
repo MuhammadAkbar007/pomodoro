@@ -9,13 +9,13 @@ from pathlib import Path
 # STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
 STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
-WORK = 30
+WORK = 10
 # WORK = 25 * 60  # 25 minutes
 
-SHORT_BREAK = 30
+SHORT_BREAK = 10
 # SHORT_BREAK = 5 * 60
 
-LONG_BREAK = 30
+LONG_BREAK = 10
 # LONG_BREAK = 15 * 60
 
 
@@ -74,11 +74,10 @@ while True:
     cycle = cycle_raw % 4
     cycle = 4 if cycle == 0 and cycle_raw != 0 else cycle
 
-    # Build dots: ●  = done, ○  = remaining 󰨑
-    dots = "󰜋" * (cycle - 1) + "󰨑"
-    # dots = "" * cycle
-    # dots = "" * cycle + "" * (4 - cycle) # out of 4
-    # dots = "" * (cycle - 1) + "◉" + "" * (4 - cycle) # currently
+    if cycle == 0:
+        dots = "󰨑" + "󰜌" * 3
+    else:
+        dots = "󰜋" * (cycle - 1) + "󰨑" + "󰜌" * (4 - cycle)
 
     if state == "work":
         text = f"󱎫 {minutes:02}:{seconds:02} {dots}"  # 󰔛
@@ -122,7 +121,6 @@ while True:
             if data["cycle"] % 4 == 0:
                 data["state"] = "break"
                 data["duration"] = LONG_BREAK
-                data["cycle"] = 0
             else:
                 data["state"] = "break"
                 data["duration"] = SHORT_BREAK

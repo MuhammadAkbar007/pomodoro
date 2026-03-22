@@ -14,7 +14,7 @@ import time  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 
-WORK = 30
+WORK = 10
 # STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
 STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
@@ -112,8 +112,7 @@ class Overlay(Gtk.Window):
         seconds = remaining % 60
 
         # Break type logic
-        cycle = data.get("cycle", 0)
-        if cycle != 0 and cycle % 4 == 0:
+        if data.get("cycle", 0) % 4 == 0:
             break_type = "Long Break"
         else:
             break_type = "Short Break"
