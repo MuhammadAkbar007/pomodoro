@@ -69,15 +69,13 @@ while True:
     seconds = remaining % 60
 
     cycle_raw = data.get("cycle", 0)
+    completed = cycle_raw % 4
+    dots = "󰜋" * completed + "󰜌" * (4 - completed)
 
-    # Normalize to 1–4
-    cycle = cycle_raw % 4
-    cycle = 4 if cycle == 0 and cycle_raw != 0 else cycle
-
-    if cycle == 0:
-        dots = "󰨑" + "󰜌" * 3
-    else:
-        dots = "󰜋" * (cycle - 1) + "󰨑" + "󰜌" * (4 - cycle)
+    # if completed == 0:
+    # dots = "󰨑" + "󰜌" * 3
+    # else:
+    # dots = "󰜋" * (cycle - 1) + "󰨑" + "󰜌" * (4 - cycle)
 
     if state == "work":
         text = f"󱎫 {minutes:02}:{seconds:02} {dots}"  # 󰔛
