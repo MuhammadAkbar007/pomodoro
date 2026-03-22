@@ -6,17 +6,12 @@ import os
 import subprocess
 from pathlib import Path
 
-# STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
+ICON = Path(__file__).resolve().parent / "assets" / "pomodoro_icon.png"
 STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
-WORK = 10
-# WORK = 25 * 60  # 25 minutes
-
-SHORT_BREAK = 10
-# SHORT_BREAK = 5 * 60
-
-LONG_BREAK = 10
-# LONG_BREAK = 15 * 60
+WORK = 25 * 60  # 25 minutes
+SHORT_BREAK = 5 * 60
+LONG_BREAK = 15 * 60
 
 
 def load():
@@ -82,9 +77,9 @@ while True:
         dots = "󰜌" * 4
 
     if state == "work":
-        text = f"󱎫 {minutes:02}:{seconds:02} {dots} ({cycle_raw})"  # 󰔛
+        text = f"󱎫 {minutes:02}:{seconds:02} {dots}"  # 󰔛
     elif state == "break":
-        text = f" {minutes:02}:{seconds:02} {dots} ({cycle_raw})"
+        text = f" {minutes:02}:{seconds:02} {dots}"
     elif state == "waiting":
         text = f" -- : -- {dots}"  # 󰞌 󰚭
     else:
@@ -112,7 +107,7 @@ while True:
         else:
             msg = "Break is over"
 
-        subprocess.run(["notify-send", "Pomodoro", msg])
+        subprocess.run(["notify-send", "-i", ICON, "Pomodoro", msg])
         subprocess.run(["paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga"])
 
         if state == "work":

@@ -7,17 +7,11 @@ import sys
 import time
 from pathlib import Path
 
-# STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
 STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
-WORK = 10
-# WORK = 25 * 60
-
-SHORT_BREAK = 10
-# SHORT_BREAK = 5 * 60
-
-LONG_BREAK = 10
-# LONG_BREAK = 15 * 60
+WORK = 25 * 60
+SHORT_BREAK = 5 * 60
+LONG_BREAK = 15 * 60
 
 
 def load():

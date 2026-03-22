@@ -14,8 +14,7 @@ import time  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 
-WORK = 10
-# STATE_FILE = Path.home() / ".cache/pomodoro_state.json"
+WORK = 25 * 60
 STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
 
 
