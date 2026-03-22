@@ -70,17 +70,21 @@ while True:
 
     cycle_raw = data.get("cycle", 0)
     completed = cycle_raw % 4
-    dots = "󰜋" * completed + "󰜌" * (4 - completed)
-
-    # if completed == 0:
-    # dots = "󰨑" + "󰜌" * 3
-    # else:
-    # dots = "󰜋" * (cycle - 1) + "󰨑" + "󰜌" * (4 - cycle)
 
     if state == "work":
-        text = f"󱎫 {minutes:02}:{seconds:02} {dots}"  # 󰔛
+        current = completed + 1 if completed < 4 else 4
+        dots = "󰜋" * completed + "󰨑" + "󰜌" * (4 - current)
+    elif state in ("break", "waiting"):
+        if completed == 0 and cycle_raw != 0:
+            completed = 4
+        dots = "󰜋" * completed + "󰜌" * (4 - completed)
+    else:
+        dots = "󰜌" * 4
+
+    if state == "work":
+        text = f"󱎫 {minutes:02}:{seconds:02} {dots} ({cycle_raw})"  # 󰔛
     elif state == "break":
-        text = f" {minutes:02}:{seconds:02} {dots}"
+        text = f" {minutes:02}:{seconds:02} {dots} ({cycle_raw})"
     elif state == "waiting":
         text = f" -- : -- {dots}"  # 󰞌 󰚭
     else:

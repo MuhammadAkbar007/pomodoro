@@ -34,7 +34,9 @@ def load():
 
 
 def save(data):
-    STATE_FILE.write_text(json.dumps(data))
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data))
+    tmp.replace(STATE_FILE)
 
 
 cmd = sys.argv[1] if len(sys.argv) > 1 else None
