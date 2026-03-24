@@ -126,16 +126,16 @@ class Overlay(Gtk.Window):
         return True
 
     def close(self, *args):
-        # data = load()
-        # if data and data["state"] in ("waiting", "break"):
-        #     data["state"] = "work"
-        #     data["duration"] = WORK
-        #     data["start_time"] = time.time()
-        #     data["paused"] = False
-        #     data["paused_at"] = None
-        #     data["handled"] = False
-        #
-        #     STATE_FILE.write_text(json.dumps(data))
+        data = load()
+        if data and data["state"] in ("waiting", "break"):
+            data["state"] = "work"
+            data["duration"] = WORK
+            data["start_time"] = time.time()
+            data["paused"] = False
+            data["paused_at"] = None
+            data["handled"] = False
+
+            STATE_FILE.write_text(json.dumps(data))
 
         Gtk.main_quit()
 
