@@ -6,7 +6,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GtkLayerShell", "0.1")
 
-from gi.repository import Gtk, Gdk, GLib, GtkLayerShell  # noqa: E402
+from gi.repository import Gtk, Gdk, GLib, GtkLayerShell  # noqa: E402 # type: ignore
 
 import json  # noqa: E402
 import os  # noqa: E402
@@ -126,16 +126,16 @@ class Overlay(Gtk.Window):
         return True
 
     def close(self, *args):
-        data = load()
-        if data and data["state"] in ("waiting", "break"):
-            data["state"] = "work"
-            data["duration"] = WORK
-            data["start_time"] = time.time()
-            data["paused"] = False
-            data["paused_at"] = None
-            data["handled"] = False
-
-            STATE_FILE.write_text(json.dumps(data))
+        # data = load()
+        # if data and data["state"] in ("waiting", "break"):
+        #     data["state"] = "work"
+        #     data["duration"] = WORK
+        #     data["start_time"] = time.time()
+        #     data["paused"] = False
+        #     data["paused_at"] = None
+        #     data["handled"] = False
+        #
+        #     STATE_FILE.write_text(json.dumps(data))
 
         Gtk.main_quit()
 
