@@ -1,3 +1,3 @@
-# TODOs:
- - [ ] provide icon for notification
+# Pomodoro
+custom pomodoro
 
