@@ -83,7 +83,8 @@ while True:
     elif state == "waiting":
         text = f" -- : -- {dots}"  # 󰞌 󰚭
     else:
-        text = " -- : --"
+        text = " pomodoro "
+        # text = " -- : --"
 
     print(
         json.dumps(
