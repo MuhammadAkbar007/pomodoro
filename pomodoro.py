@@ -86,11 +86,13 @@ while True:
         text = " pomodoro "
         # text = " -- : --"
 
+    output_class = "paused" if data["paused"] else state
+
     print(
         json.dumps(
             {
                 "text": text,
-                "class": state,
+                "class": output_class,
             }
         ),
         flush=True,
