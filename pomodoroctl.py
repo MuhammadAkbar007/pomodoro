@@ -40,20 +40,20 @@ now = time.time()
 
 # ---- RESET
 if cmd == "reset":
-    # if data["state"] == "break":
-    #     # determine correct break type
-    #     if data.get("cycle", 0) % 4 == 0 and data.get("cycle", 0) != 0:
-    #         data["duration"] = LONG_BREAK
-    #     else:
-    #         data["duration"] = SHORT_BREAK
-    # else:
-    #     data["state"] = "work"
-    #     data["duration"] = WORK
-    #     data["cycle"] = 0
+    if data["state"] == "break":
+        # determine correct break type
+        if data.get("cycle", 0) % 4 == 0 and data.get("cycle", 0) != 0:
+            data["duration"] = LONG_BREAK
+        else:
+            data["duration"] = SHORT_BREAK
+    else:
+        data["state"] = "work"
+        data["duration"] = WORK
+        # data["cycle"] = 0
 
-    data["state"] = "work"
-    data["duration"] = WORK
-    data["cycle"] = 0
+    # data["state"] = "work"
+    # data["duration"] = WORK
+    # data["cycle"] = 0
     data["start_time"] = now
     data["paused"] = False
     data["paused_at"] = None
