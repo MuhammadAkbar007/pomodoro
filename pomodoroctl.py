@@ -105,10 +105,17 @@ elif cmd == "next":
             data["state"] = "break"
             data["duration"] = SHORT_BREAK
 
-        # 👇 launch overlay
+        # 👇 launch the break overlay (session-aware: GTK Layer Shell on
+        # Wayland, plain fullscreen GTK on X11/i3 via overlay_x11.py)
+        here = Path(__file__).resolve().parent
+        use_wayland = bool(os.environ.get("WAYLAND_DISPLAY")) and \
+            os.environ.get("XDG_SESSION_TYPE") != "x11"
+        overlay = "overlay.py" if use_wayland else "overlay_x11.py"
+
         env = os.environ.copy()
-        env.setdefault("WAYLAND_DISPLAY", "wayland-0")
         env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+        if use_wayland:
+            env.setdefault("WAYLAND_DISPLAY", "wayland-0")
 
         subprocess.Popen(
             [
@@ -116,7 +123,7 @@ elif cmd == "next":
                 "-n",
                 "/tmp/pomodoro_overlay.lock",
                 "python3",
-                "/home/akbar/akbarDev/pet-projects/pomodoro/overlay.py",
+                str(here / overlay),
             ],
             env=env,
         )
