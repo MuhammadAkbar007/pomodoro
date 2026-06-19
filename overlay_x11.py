@@ -114,7 +114,7 @@ class Overlay(Gtk.Window):
 
     def on_draw(self, widget, cr):
         # Semi-transparent black overlay (same as overlay.py).
-        cr.set_source_rgba(0, 0, 0, 0.7)
+        cr.set_source_rgba(0, 0, 0, 0.1)
         cr.paint()
         return False
 
