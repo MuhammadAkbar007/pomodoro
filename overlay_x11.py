@@ -3,9 +3,11 @@
 # Layer Shell (a Wayland-only wlr-layer-shell protocol that does nothing on X11).
 #
 # Same state-file logic and dismiss behaviour as overlay.py; only the windowing
-# differs: instead of a layer surface we use a fullscreen, undecorated,
-# keep-above GTK window with an RGBA visual. The semi-transparent fill needs a
-# compositor for alpha — picom provides that on this i3 setup.
+# differs: instead of a layer surface we use an override-redirect (POPUP) GTK
+# window sized to the monitor, with an RGBA visual. Override-redirect keeps the
+# window out of i3's control so it neither steals the focused app's fullscreen
+# nor gets tiled. The semi-transparent fill needs a compositor for alpha —
+# picom provides that on this i3 setup.
 
 import gi
 
@@ -14,6 +16,7 @@ gi.require_version("Gdk", "3.0")
 
 from gi.repository import Gtk, Gdk, GLib  # noqa: E402 # type: ignore
 
+import cairo  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import time  # noqa: E402
@@ -32,22 +35,34 @@ def load():
 
 class Overlay(Gtk.Window):
     def __init__(self):
-        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        # POPUP => override-redirect: i3 does not manage this window. That
+        # matters because i3 allows only one *managed* fullscreen window per
+        # output, so the old self.fullscreen() call kicked whatever app was
+        # fullscreen out of fullscreen. An override-redirect window is unmanaged
+        # and simply stacks above everything — including a fullscreen app — the
+        # same way rofi/dmenu/dunst do, without disturbing its state.
 
-        # --- X11 fullscreen overlay (replaces the layer-shell setup) ---
-        self.set_decorated(False)
-        self.set_skip_taskbar_hint(True)
-        self.set_skip_pager_hint(True)
-        self.set_keep_above(True)
-        self.set_type_hint(Gdk.WindowTypeHint.SPLASHSCREEN)
+        super().__init__(type=Gtk.WindowType.POPUP)
+
+        # Tag the window as a tooltip. picom is (despite blur-background=false in
+        # the on-disk config) blurring translucent windows on this running
+        # instance, which frosts the overlay so you can't see through it. picom's
+        # blur-background-exclude list already contains window_type='tooltip', so
+        # advertising that type makes picom skip the blur — a code-only opt-out,
+        # no picom.conf change. (Verified: without it the view behind is smeared;
+        # with it the view behind stays sharp.)
+        self.set_type_hint(Gdk.WindowTypeHint.TOOLTIP)
+
         self.set_app_paintable(True)
-        self.fullscreen()
 
         # RGBA visual so on_draw can paint a translucent black (picom composites).
         screen = self.get_screen()
         visual = screen.get_rgba_visual()
         if visual:
             self.set_visual(visual)
+
+        # Manually cover the monitor under the pointer (no WM fullscreen).
+        self._cover_pointer_monitor(screen)
 
         self.connect("draw", self.on_draw)
 
@@ -97,12 +112,31 @@ class Overlay(Gtk.Window):
         self._armed = True
         return False
 
+    def _cover_pointer_monitor(self, screen):
+        # Size/position the window to exactly cover the monitor the pointer is
+        # on. Replaces self.fullscreen(); an override-redirect window gets no
+        # WM geometry, so we set it ourselves.
+        display = self.get_display()
+        pointer = display.get_default_seat().get_pointer()
+        _screen, px, py = pointer.get_position()
+        monitor = display.get_monitor_at_point(px, py)
+        if monitor is None:
+            monitor = display.get_primary_monitor()
+        geo = monitor.get_geometry()
+        self.move(geo.x, geo.y)
+        self.set_size_request(geo.width, geo.height)
+        self.resize(geo.width, geo.height)
+
     def on_map(self, *args):
         try:
             seat = self.get_display().get_default_seat()
+            # Grab keyboard AND pointer: a pointer grab routes every motion /
+            # click to this window regardless of where it happens on screen, so
+            # "press any key or move the mouse" dismisses from anywhere — not
+            # only when the pointer is over the centered text.
             seat.grab(
                 self.get_window(),
-                Gdk.SeatCapabilities.KEYBOARD,
+                Gdk.SeatCapabilities.ALL,
                 True,
                 None,
                 None,
@@ -113,9 +147,20 @@ class Overlay(Gtk.Window):
         return False
 
     def on_draw(self, widget, cr):
-        # Semi-transparent black overlay (same as overlay.py).
-        cr.set_source_rgba(0, 0, 0, 0.1)
+        # Semi-transparent black overlay. Use the SOURCE operator (replace), not
+        # the default OVER (blend): this window redraws every second, and on the
+        # iGPU/glx path the override-redirect window's backing buffer is not
+        # reliably cleared between frames. With OVER that means each redraw
+        # stacks another 0.1 black layer, creeping to solid black over a long
+        # break. SOURCE writes exactly rgba(0,0,0,0.1) every frame -> stable.
+        # save/restore so the label child still composites with OVER on top.
+        cr.save()
+        cr.set_operator(cairo.OPERATOR_SOURCE)
+        cr.set_source_rgba(
+            0, 0, 0, 0.85
+        )  # last value = dim level (0.0 clear .. 1.0 black)
         cr.paint()
+        cr.restore()
         return False
 
     def update(self):
