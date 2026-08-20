@@ -3,45 +3,79 @@
 # Layer Shell (a Wayland-only wlr-layer-shell protocol that does nothing on X11).
 #
 # Same state-file logic and dismiss behaviour as overlay.py; only the windowing
-# differs: instead of a layer surface we use an override-redirect (POPUP) GTK
-# window sized to the monitor, with an RGBA visual. Override-redirect keeps the
-# window out of i3's control so it neither steals the focused app's fullscreen
-# nor gets tiled. The semi-transparent fill needs a compositor for alpha —
-# picom provides that on this i3 setup.
+# differs: instead of a layer surface we use override-redirect (POPUP) GTK
+# windows sized to each monitor, with an RGBA visual. Override-redirect keeps
+# the windows out of i3's control so they neither steal the focused app's
+# fullscreen nor get tiled. The semi-transparent fill needs a compositor for
+# alpha — picom provides that on this i3 setup.
+#
+# One window per monitor: a break should dim every screen, not just whichever
+# one the pointer happened to be on. Input is grabbed by a single window (a seat
+# grab is exclusive) and that grab routes events from all monitors to it, so a
+# key or mouse move anywhere dismisses the whole set.
 
+import subprocess
+import time
+
+import cairo
 import gi
 
+from pomostate import WORK, load, locked, save
+
+# Must run before gi.repository is imported, hence the import below it.
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 
-from gi.repository import Gtk, Gdk, GLib  # noqa: E402 # type: ignore
+from gi.repository import Gdk, GLib, Gtk  # type: ignore
 
-import cairo  # noqa: E402
-import json  # noqa: E402
-import os  # noqa: E402
-import time  # noqa: E402
-from pathlib import Path  # noqa: E402
+CSS = b"#overlay-label{color:#ffffff;font-size:48px;font-weight:bold;}"
+
+# Dim level: 0.0 clear .. 1.0 solid black.
+DIM = 0.85
+
+# Ignore input for this long after mapping, so the seat grab and whatever
+# pointer motion is already in flight don't dismiss the overlay instantly.
+ARM_DELAY_MS = 700
+
+_windows = []
+_armed = False
 
 
-WORK = 25 * 60
-STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
+def screen_locked():
+    # i3lock (spawned by ~/.config/i3/lock.sh via xss-lock) takes an EXCLUSIVE
+    # X11 keyboard + pointer grab. An override-redirect overlay mapped on top of
+    # it can never acquire that grab, so it receives no input and its dismiss
+    # handlers never fire — it just sits there forever. The lock always wins, so
+    # we simply skip the overlay whenever the screen is locked.
+    return (
+        subprocess.run(
+            ["pgrep", "-x", "i3lock"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,  # rc 1 just means "not locked"
+        ).returncode
+        == 0
+    )
 
 
-def load():
-    if not STATE_FILE.exists():
-        return None
-    return json.loads(STATE_FILE.read_text())
+def quit_overlay():
+    # Deferred on purpose. Gtk.main_quit() called before Gtk.main() has started
+    # is silently dropped, and the process then sits in Gtk.main() forever with
+    # an invisible window and a live input grab. idle_add defers the quit until
+    # the loop is actually running, so an early exit decision still lands.
+    GLib.idle_add(Gtk.main_quit)
 
 
 class Overlay(Gtk.Window):
-    def __init__(self):
+    """One dimmed window covering exactly one monitor."""
+
+    def __init__(self, monitor, grab_input):
         # POPUP => override-redirect: i3 does not manage this window. That
         # matters because i3 allows only one *managed* fullscreen window per
         # output, so the old self.fullscreen() call kicked whatever app was
         # fullscreen out of fullscreen. An override-redirect window is unmanaged
         # and simply stacks above everything — including a fullscreen app — the
         # same way rofi/dmenu/dunst do, without disturbing its state.
-
         super().__init__(type=Gtk.WindowType.POPUP)
 
         # Tag the window as a tooltip. picom is (despite blur-background=false in
@@ -56,13 +90,16 @@ class Overlay(Gtk.Window):
         self.set_app_paintable(True)
 
         # RGBA visual so on_draw can paint a translucent black (picom composites).
-        screen = self.get_screen()
-        visual = screen.get_rgba_visual()
+        visual = self.get_screen().get_rgba_visual()
         if visual:
             self.set_visual(visual)
 
-        # Manually cover the monitor under the pointer (no WM fullscreen).
-        self._cover_pointer_monitor(screen)
+        # An override-redirect window gets no WM geometry, so we place and size
+        # it over its monitor ourselves.
+        geo = monitor.get_geometry()
+        self.move(geo.x, geo.y)
+        self.set_size_request(geo.width, geo.height)
+        self.resize(geo.width, geo.height)
 
         self.connect("draw", self.on_draw)
 
@@ -78,60 +115,23 @@ class Overlay(Gtk.Window):
         box.add(self.label)
         self.add(box)
 
-        # Big readable white text, no external CSS file needed.
-        css = Gtk.CssProvider()
-        css.load_from_data(
-            b"#overlay-label{color:#ffffff;font-size:48px;font-weight:bold;}"
-        )
-        Gtk.StyleContext.add_provider_for_screen(
-            screen, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-
-        # --- Dismiss on interaction. Arm after a short delay so the keyboard
-        # grab / initial pointer motion doesn't instantly close the overlay. ---
-        self._armed = False
-        GLib.timeout_add(700, self._arm)
-
         self.add_events(
             Gdk.EventMask.KEY_PRESS_MASK
             | Gdk.EventMask.BUTTON_PRESS_MASK
             | Gdk.EventMask.POINTER_MOTION_MASK
         )
-        self.connect("key-press-event", self.close)
-        self.connect("button-press-event", self.close)
-        self.connect("motion-notify-event", self.close)
+        self.connect("key-press-event", dismiss)
+        self.connect("button-press-event", dismiss)
+        self.connect("motion-notify-event", dismiss)
 
-        # Grab the keyboard so "press any key" works even over a fullscreen app.
-        self.connect("map-event", self.on_map)
-
-        # --- Timer loop ---
-        self.update()
-        GLib.timeout_add(1000, self.update)
-
-    def _arm(self):
-        self._armed = True
-        return False
-
-    def _cover_pointer_monitor(self, screen):
-        # Size/position the window to exactly cover the monitor the pointer is
-        # on. Replaces self.fullscreen(); an override-redirect window gets no
-        # WM geometry, so we set it ourselves.
-        display = self.get_display()
-        pointer = display.get_default_seat().get_pointer()
-        _screen, px, py = pointer.get_position()
-        monitor = display.get_monitor_at_point(px, py)
-        if monitor is None:
-            monitor = display.get_primary_monitor()
-        geo = monitor.get_geometry()
-        self.move(geo.x, geo.y)
-        self.set_size_request(geo.width, geo.height)
-        self.resize(geo.width, geo.height)
+        if grab_input:
+            self.connect("map-event", self.on_map)
 
     def on_map(self, *args):
         try:
             seat = self.get_display().get_default_seat()
             # Grab keyboard AND pointer: a pointer grab routes every motion /
-            # click to this window regardless of where it happens on screen, so
+            # click to this window regardless of which monitor it happens on, so
             # "press any key or move the mouse" dismisses from anywhere — not
             # only when the pointer is over the centered text.
             seat.grab(
@@ -142,7 +142,10 @@ class Overlay(Gtk.Window):
                 None,
                 None,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
+            # Deliberately broad and silent: if the grab fails for any reason
+            # the overlay must still show. It then dismisses on events delivered
+            # to it directly, which is the pre-grab behaviour.
             pass
         return False
 
@@ -151,70 +154,112 @@ class Overlay(Gtk.Window):
         # the default OVER (blend): this window redraws every second, and on the
         # iGPU/glx path the override-redirect window's backing buffer is not
         # reliably cleared between frames. With OVER that means each redraw
-        # stacks another 0.1 black layer, creeping to solid black over a long
-        # break. SOURCE writes exactly rgba(0,0,0,0.1) every frame -> stable.
+        # stacks another layer, creeping to solid black over a long break.
+        # SOURCE writes exactly rgba(0, 0, 0, DIM) every frame -> stable.
         # save/restore so the label child still composites with OVER on top.
         cr.save()
         cr.set_operator(cairo.OPERATOR_SOURCE)
-        cr.set_source_rgba(
-            0, 0, 0, 0.85
-        )  # last value = dim level (0.0 clear .. 1.0 black)
+        cr.set_source_rgba(0, 0, 0, DIM)
         cr.paint()
         cr.restore()
         return False
 
-    def update(self):
-        data = load()
-        if not data:
-            return True
-
-        if data["state"] not in ("break", "waiting"):
-            Gtk.main_quit()
-            return False
-
-        now = time.time()
-        if data["state"] == "break":
-            elapsed = now - data["start_time"]
-            remaining = max(0, int(data["duration"] - elapsed))
-        else:
-            remaining = 0
-
-        minutes = remaining // 60
-        seconds = remaining % 60
-
-        if data.get("cycle", 0) % 4 == 0:
-            break_type = "Long Break"
-        else:
-            break_type = "Short Break"
-
-        if data["state"] == "break":
-            label = f"{break_type}\n{minutes:02}:{seconds:02}"
-        else:
-            label = "Break finished\nPress any key to continue"
-        self.label.set_text(label)
-
+    def set_label(self, text):
+        self.label.set_text(text)
         self.queue_draw()
+
+
+def label_for(data):
+    if data["state"] != "break":
+        return "Break finished\nPress any key to continue"
+
+    remaining = max(0, int(data["duration"] - (time.time() - data["start_time"])))
+    minutes, seconds = divmod(remaining, 60)
+    break_type = "Long Break" if data.get("cycle", 0) % 4 == 0 else "Short Break"
+    return f"{break_type}\n{minutes:02}:{seconds:02}"
+
+
+def tick():
+    """Repaint every monitor once a second, or tear the overlay down."""
+    # If the screen gets locked while a break is on screen, yield to i3lock
+    # (which owns the input grab) rather than hang on top of it, undismissable.
+    if screen_locked():
+        quit_overlay()
+        return False
+
+    data = load()
+    if data["state"] not in ("break", "waiting"):
+        quit_overlay()
+        return False
+
+    text = label_for(data)
+    for win in _windows:
+        win.set_label(text)
+    return True
+
+
+def arm():
+    global _armed
+    _armed = True
+    return False
+
+
+def dismiss(*args):
+    """Any key, click or mouse move on any monitor starts the next work session."""
+    if not _armed:
         return True
 
-    def close(self, *args):
-        if not self._armed:
-            return True
-
+    with locked():
         data = load()
-        if data and data["state"] in ("waiting", "break"):
+        if data["state"] in ("waiting", "break"):
             data["state"] = "work"
             data["duration"] = WORK
             data["start_time"] = time.time()
             data["paused"] = False
             data["paused_at"] = None
-            data["handled"] = False
+            save(data)
 
-            STATE_FILE.write_text(json.dumps(data))
+    quit_overlay()
+    return True
 
-        Gtk.main_quit()
+
+def main():
+    # Don't map over the lock screen — see screen_locked() for why.
+    if screen_locked():
+        raise SystemExit(0)
+
+    display = Gdk.Display.get_default()
+    _, px, py = display.get_default_seat().get_pointer().get_position()
+
+    monitors = [display.get_monitor(i) for i in range(display.get_n_monitors())]
+
+    # A seat grab is exclusive, so exactly one window may take it. Give it to
+    # the monitor holding the pointer; if the pointer is somewhere no monitor
+    # claims, the first window takes it.
+    grab_index = 0
+    for i, monitor in enumerate(monitors):
+        geo = monitor.get_geometry()
+        if geo.x <= px < geo.x + geo.width and geo.y <= py < geo.y + geo.height:
+            grab_index = i
+            break
+
+    # One provider for the whole screen, not one per window.
+    css = Gtk.CssProvider()
+    css.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+
+    for i, monitor in enumerate(monitors):
+        win = Overlay(monitor, grab_input=(i == grab_index))
+        _windows.append(win)
+        win.show_all()
+
+    tick()  # paint before the first second elapses
+    GLib.timeout_add(1000, tick)
+    GLib.timeout_add(ARM_DELAY_MS, arm)
+    Gtk.main()
 
 
 if __name__ == "__main__":
-    win = Overlay()
-    win.show_all()
-    Gtk.main()
+    main()

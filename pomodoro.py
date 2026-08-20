@@ -1,163 +1,69 @@
 #!/usr/bin/env python3
+"""Bar module: prints the pomodoro state as one JSON line per second.
 
-import time
+READ-ONLY on purpose. Polybar and waybar both spawn one module process per
+connected output, so anything that writes state or fires a side effect here
+happens once per monitor. The timer itself lives in pomodorod.py.
+"""
+
 import json
-import os
-import subprocess
-from pathlib import Path
+import time
 
-ICON = Path(__file__).resolve().parent / "assets" / "pomodoro_icon.png"
-STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
-
-WORK = 25 * 60  # 25 minutes
-SHORT_BREAK = 5 * 60
-LONG_BREAK = 15 * 60
+from pomostate import load
 
 
-def load():
-    if not STATE_FILE.exists():
-        return {
-            "state": "idle",
-            "cycle": 0,
-            "start_time": None,
-            "duration": WORK,
-            "paused": False,
-            "paused_at": None,
-        }
-    return json.loads(STATE_FILE.read_text())
+def remaining_seconds(data, now):
+    if data["state"] == "idle":
+        return data["duration"]
+    if data["paused"] and data["paused_at"] is not None:
+        return int(data["paused_at"])
+    if data["start_time"] is not None:
+        return max(0, int(data["duration"] - (now - data["start_time"])))
+    return data["duration"]
 
 
-def save(data):
-    tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data))
-    tmp.replace(STATE_FILE)
-
-
-while True:
-    data = load()
-    now = time.time()
-
-    state = data["state"]
-    if state == "idle":
-        remaining = data["duration"]
-    elif state == "waiting":
-        print(
-            json.dumps(
-                {
-                    "text": " --:--",  # or reuse your existing formatting
-                    "class": state,
-                }
-            ),
-            flush=True,
-        )
-        time.sleep(1)
-        continue
-    elif data["paused"] and data["paused_at"] is not None:
-        remaining = int(data["paused_at"])
-    elif data["start_time"] is not None:
-        elapsed = now - data["start_time"]
-        remaining = max(0, int(data["duration"] - elapsed))
-    else:
-        remaining = data["duration"]
-
-    minutes = remaining // 60
-    seconds = remaining % 60
-
+def dots(data):
+    """Four-dot cycle indicator: filled = done, hollow = to go."""
     cycle_raw = data.get("cycle", 0)
     completed = cycle_raw % 4
 
-    if state == "work":
+    if data["state"] == "work":
         current = completed + 1 if completed < 4 else 4
-        dots = "󰜋" * completed + "󰨑" + "󰜌" * (4 - current)
-    elif state in ("break", "waiting"):
+        return "󰜋" * completed + "󰨑" + "󰜌" * (4 - current)
+    if data["state"] == "break":
         if completed == 0 and cycle_raw != 0:
             completed = 4
-        dots = "󰜋" * completed + "󰜌" * (4 - completed)
-    else:
-        dots = "󰜌" * 4
+        return "󰜋" * completed + "󰜌" * (4 - completed)
+    return "󰜌" * 4
+
+
+def render(data, now):
+    """Return the (text, class) pair for the bar."""
+    state = data["state"]
+
+    # `waiting` = break done, next work session not started. No countdown to
+    # show and no dots either — this is what the module has always printed.
+    if state == "waiting":
+        return " --:--", state
+
+    minutes, seconds = divmod(remaining_seconds(data, now), 60)
 
     if state == "work":
-        text = f"󱎫 {minutes:02}:{seconds:02} {dots}"  # 󰔛
+        text = f"󱎫 {minutes:02}:{seconds:02} {dots(data)}"  # 󰔛
     elif state == "break":
-        text = f" {minutes:02}:{seconds:02} {dots}"
-    elif state == "waiting":
-        text = f" -- : -- {dots}"  # 󰞌 󰚭
+        text = f" {minutes:02}:{seconds:02} {dots(data)}"
     else:
-        text = " pomodoro "
-        # text = " -- : --"
+        text = " pomodoro "
 
-    output_class = "paused" if data["paused"] else state
+    return text, "paused" if data["paused"] else state
 
-    print(
-        json.dumps(
-            {
-                "text": text,
-                "class": output_class,
-            }
-        ),
-        flush=True,
-    )
 
-    if (
-        remaining == 0
-        and state not in ("idle", "waiting")
-        and not data.get("handled", False)
-    ):
-        data["handled"] = True
+def main():
+    while True:
+        text, output_class = render(load(), time.time())
+        print(json.dumps({"text": text, "class": output_class}), flush=True)
+        time.sleep(1)
 
-        if state == "work":
-            msg = "Work session complete"
-        else:
-            msg = "Break is over"
 
-        subprocess.run(["notify-send", "-i", ICON, "Pomodoro", msg])
-        subprocess.run(["paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga"])
-
-        if state == "work":
-            data["start_time"] = now
-            data["cycle"] = data.get("cycle", 0) + 1
-
-            # every 4th work session → long break
-            if data["cycle"] % 4 == 0:
-                data["state"] = "break"
-                data["duration"] = LONG_BREAK
-            else:
-                data["state"] = "break"
-                data["duration"] = SHORT_BREAK
-
-            # 👇 launch the break overlay (session-aware: GTK Layer Shell on
-            # Wayland, plain fullscreen GTK on X11/i3 via overlay_x11.py)
-            here = Path(__file__).resolve().parent
-            use_wayland = bool(os.environ.get("WAYLAND_DISPLAY")) and \
-                os.environ.get("XDG_SESSION_TYPE") != "x11"
-            overlay = "overlay.py" if use_wayland else "overlay_x11.py"
-
-            env = os.environ.copy()
-            env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-            if use_wayland:
-                env.setdefault("WAYLAND_DISPLAY", "wayland-0")
-
-            subprocess.Popen(
-                [
-                    "flock",
-                    "-n",
-                    "/tmp/pomodoro_overlay.lock",
-                    "python3",
-                    str(here / overlay),
-                ],
-                env=env,
-            )
-
-        elif state == "break":
-            data["state"] = "waiting"
-            data["start_time"] = None
-            data["paused"] = False
-            data["paused_at"] = None
-
-        data["paused"] = False
-        data["paused_at"] = None
-        data["handled"] = False
-
-        save(data)
-
-    time.sleep(1)
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,36 @@
+[Unit]
+Description=Pomodoro timer daemon
+Documentation=file:///home/akbar/akbarDev/pet-projects/pomodoro/README.md
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/akbar/akbarDev/pet-projects/pomodoro/pomodorod.py
+
+Restart=always
+RestartSec=5
+
+# Signal only the daemon, never its children. spawn_overlay() uses Popen, so a
+# live break overlay sits in this unit's cgroup; the default KillMode of
+# control-group would tear it off the screen every time i3 reloads and runs
+# `systemctl --user restart pomodoro.service`. KillMode=mixed does NOT help —
+# it still SIGKILLs the rest of the cgroup. The orphaned overlay exits on its
+# own as soon as the state file leaves `break`.
+KillMode=process
+
+# DISPLAY, XAUTHORITY and XDG_SESSION_TYPE deliberately NOT set here: i3 pushes
+# them into the systemd user environment via `dbus-update-activation-environment
+# --systemd` (~/.config/i3/config). Hardcoding them — especially setting
+# WAYLAND_DISPLAY the way namozvaqti.service does — would break the
+# X11-vs-Wayland overlay pick in pomostate.spawn_overlay().
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/akbar/.local/bin
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+StandardOutput=journal
+StandardError=journal
+
+# No [Install] section on purpose — do NOT `systemctl --user enable` this.
+# default.target is reached before i3 runs its dbus-update-activation-environment
+# line, so an enabled unit starts with no DISPLAY and every overlay it spawns for
+# the rest of the session fails to open. i3 starts it instead, after the
+# environment exists:
+#   exec_always --no-startup-id systemctl --user restart pomodoro.service

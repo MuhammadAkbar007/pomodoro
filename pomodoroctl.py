@@ -1,139 +1,123 @@
 #!/usr/bin/env python3
+"""One-shot commands against the pomodoro state — bar clicks and lock hooks.
 
-import json
-import os
-import subprocess
+Writes the state file and exits; pomodorod.py picks the change up on its next
+tick. See pomostate.py for the state shape.
+"""
+
 import sys
 import time
-from pathlib import Path
 
-STATE_FILE = Path(f"/run/user/{os.getuid()}/pomodoro_state.json")
-
-WORK = 25 * 60
-SHORT_BREAK = 5 * 60
-LONG_BREAK = 15 * 60
-
-
-def load():
-    if not STATE_FILE.exists():
-        return {
-            "state": "idle",
-            "cycle": 0,
-            "start_time": None,
-            "duration": WORK,
-            "paused": False,
-            "paused_at": None,
-        }
-    return json.loads(STATE_FILE.read_text())
+from pomostate import (
+    LONG_BREAK,
+    SHORT_BREAK,
+    WORK,
+    begin_break,
+    load,
+    locked,
+    save,
+    spawn_overlay,
+)
 
 
-def save(data):
-    tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data))
-    tmp.replace(STATE_FILE)
+def run(cmd, now, data):
+    """Apply `cmd` to `data` in place. Returns True if a break overlay is due.
 
+    Pure: no I/O, no clock, no exits — so the self-check can drive it directly.
+    """
+    # ---- LOCK / UNLOCK (screen-locker hooks, from ~/.config/i3/lock.sh)
+    # Freeze the timer while the screen is locked and drop into a fresh work
+    # session on login, rather than counting down while you're away.
+    if cmd in ("lock", "unlock"):
+        # Never conjure a pomodoro out of nothing: if the timer is idle (never
+        # started / stopped), lock and unlock both leave it idle.
+        if data["state"] == "idle":
+            return False
 
-cmd = sys.argv[1] if len(sys.argv) > 1 else None
-data = load()
-
-now = time.time()
-
-# ---- RESET
-if cmd == "reset":
-    if data["state"] == "break":
-        # determine correct break type
-        if data.get("cycle", 0) % 4 == 0 and data.get("cycle", 0) != 0:
-            data["duration"] = LONG_BREAK
-        else:
-            data["duration"] = SHORT_BREAK
-    else:
         data["state"] = "work"
         data["duration"] = WORK
-        # data["cycle"] = 0
+        if cmd == "lock":
+            # Prime the START of the next WORK session, paused, so nothing
+            # counts down while locked. Abandons any partial work or
+            # in-progress break — the countdown must not run while you're away.
+            data["start_time"] = None
+            data["paused"] = True
+            data["paused_at"] = WORK
+        else:
+            # Auto-start that work session the moment you log back in.
+            data["start_time"] = now
+            data["paused"] = False
+            data["paused_at"] = None
+        return False
 
-    # data["state"] = "work"
-    # data["duration"] = WORK
-    # data["cycle"] = 0
-    data["start_time"] = now
-    data["paused"] = False
-    data["paused_at"] = None
-    data["handled"] = False
+    # ---- RESET — restart the current session from the top, keeping the cycle.
+    if cmd == "reset":
+        if data["state"] == "break":
+            # Restore the break length this cycle is owed; a reset must not turn
+            # a long break into a short one.
+            cycle = data.get("cycle", 0)
+            if cycle % 4 == 0 and cycle != 0:
+                data["duration"] = LONG_BREAK
+            else:
+                data["duration"] = SHORT_BREAK
+        else:
+            data["state"] = "work"
+            data["duration"] = WORK
 
-# ---- TOGGLE
-elif cmd == "toggle":
-    if data["state"] == "idle":
-        data["state"] = "work"
         data["start_time"] = now
         data["paused"] = False
         data["paused_at"] = None
-        data["handled"] = False
 
-    elif data["state"] == "waiting":
+    # ---- TOGGLE
+    elif cmd == "toggle":
+        if data["state"] in ("idle", "waiting"):
+            data["state"] = "work"
+            data["duration"] = WORK
+            data["start_time"] = now
+            data["paused"] = False
+            data["paused_at"] = None
+
+        elif data["paused"]:
+            # RESUME — rebase start_time so the remaining time survives the pause.
+            data["paused"] = False
+            data["start_time"] = now - (data["duration"] - data["paused_at"])
+            data["paused_at"] = None
+
+        else:
+            # PAUSE
+            elapsed = now - data["start_time"]
+            data["paused"] = True
+            data["paused_at"] = max(0, int(data["duration"] - elapsed))
+
+    # ---- NEXT — skip the rest of this session.
+    elif cmd == "next":
+        if data["state"] == "work":
+            begin_break(data, now)
+            return True
+
         data["state"] = "work"
         data["duration"] = WORK
         data["start_time"] = now
         data["paused"] = False
         data["paused_at"] = None
-        data["handled"] = False
 
-    elif data["paused"]:
-        # RESUME
-        data["paused"] = False
-        data["start_time"] = now - (data["duration"] - data["paused_at"])
-        data["paused_at"] = None
-        data["handled"] = False
+    return False
 
-    else:
-        # PAUSE
-        elapsed = now - data["start_time"]
-        remaining = max(0, int(data["duration"] - elapsed))
 
-        data["paused"] = True
-        data["paused_at"] = remaining
-        data["handled"] = False
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else None
 
-# ---- NEXT
-elif cmd == "next":
-    if data["state"] == "work":
-        data["cycle"] = data.get("cycle", 0) + 1
+    with locked():
+        data = load()
+        spawn = run(cmd, time.time(), data)
+        # Save before spawning: the overlay reads the state file on startup and
+        # quits if the break isn't visible there yet.
+        save(data)
 
-        # every 4th work session → long break
-        if data["cycle"] % 4 == 0:
-            data["state"] = "break"
-            data["duration"] = LONG_BREAK
-        else:
-            data["state"] = "break"
-            data["duration"] = SHORT_BREAK
+    # Outside the lock — the overlay takes it itself when you dismiss it.
+    if spawn:
+        spawn_overlay()
 
-        # 👇 launch the break overlay (session-aware: GTK Layer Shell on
-        # Wayland, plain fullscreen GTK on X11/i3 via overlay_x11.py)
-        here = Path(__file__).resolve().parent
-        use_wayland = bool(os.environ.get("WAYLAND_DISPLAY")) and \
-            os.environ.get("XDG_SESSION_TYPE") != "x11"
-        overlay = "overlay.py" if use_wayland else "overlay_x11.py"
 
-        env = os.environ.copy()
-        env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-        if use_wayland:
-            env.setdefault("WAYLAND_DISPLAY", "wayland-0")
-
-        subprocess.Popen(
-            [
-                "flock",
-                "-n",
-                "/tmp/pomodoro_overlay.lock",
-                "python3",
-                str(here / overlay),
-            ],
-            env=env,
-        )
-    else:
-        data["state"] = "work"
-        data["duration"] = WORK
-
-    data["start_time"] = now
-    data["paused"] = False
-    data["paused_at"] = None
-    data["handled"] = False
-
-save(data)
+if __name__ == "__main__":
+    main()
